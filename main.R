@@ -10,28 +10,20 @@ if (!require(corrplot)) install.packages("corrplot")
 if (!require(zoo)) install.packages("zoo")
 if (!require(magrittr)) install.packages("magrittr")
 
-library(DBI)
-library(ggplot2)
-library(grid)
-library(corrplot)
-library(zoo)
-library(magrittr)
-library(TTR)
-library(xts)
-library(gtrendsR)
-library(reshape2)
-require(lubridate)
-devtools::install_github("PMassicotte/gtrendsR")
-
 # Check if you have universal installer package, install if not
 if("pacman" %in% rownames(installed.packages()) == FALSE){
   install.packages("pacman")
 } 
 
-source("tools.R")
+devtools::install_github("PMassicotte/gtrendsR")
 #Check, and if needed install the necessary packages
-pacman::p_load("TTR","xts","gtrendsR","caret","ROCR","lift","glmnet","MASS", "partykit", "tidyverse", "scales", "xts", "grid", "gridExtra", "smooth", "Mcomp", "psych", "plyr","ggplot2", "forecast","knitr","kableExtra","rpart","e1071") 
+pacman::p_load("TTR","xts","gtrendsR","caret","ROCR","lift","glmnet","MASS", "partykit", "tidyverse", "scales", "xts", "grid", "gridExtra", "smooth", "Mcomp", "psych", "plyr","ggplot2", "forecast","knitr","kableExtra","rpart","e1071","lubridate", "magrittr", "DBI","corrplot", "zoo","gtable") 
 
+# Make sure to use identitcal seed for reproductible results
+set.seed(1234)
+
+source("tools.R")
+source("scrapper.R")
 
 ### 1. Import and clean daily closing prices for each currency
 
@@ -42,33 +34,10 @@ vals <- dbGetQuery(con, "SELECT * FROM val") # Import values
 rm(con) # Close database connection
 
 # Clean and prepare data
-vals$id <- NULL # Drop database IDs
-currencies$id <- NULL # Drop database IDs
+vals$id = NULL # Drop database IDs
+currencies$id = NULL # Drop database IDs
 vals$datetime <- as.Date(vals$datetime) # Format dates
 vals <- vals[!duplicated(vals[,6:7]),] # Remove duplicates/one price per day
-interpolate.missing.data <- function(data) {
-  currencies <- unique(data$currency_slug)
-  newrows <- do.call("rbind", lapply(currencies, FUN=missing.date.rows, data))
-  data <- rbind(data, newrows)
-  data <- data[order(data$currency_slug,data$datetime),]; rownames(data) <- 1:nrow(data) # Sort
-  for (currency in currencies) {
-    idx <- colSums(!is.na(data[data$currency_slug==currency,1:5])) > 1
-    data[data$currency_slug==currency,c(idx,FALSE,FALSE)] <- na.approx(data[data$currency_slug==currency,c(idx,FALSE,FALSE)], na.rm=FALSE)
-  }
-  return(data)
-}
-missing.date.rows <- function(currency, data) {
-  dates <- unique(data[data$currency_slug==currency,6])
-  alldates <- seq(dates[1],dates[length(dates)],by="+1 day")
-  missingdates <- setdiff(alldates, dates)
-  return(data.frame(price_usd=rep(NA, length(missingdates)),
-                    price_btc=rep(NA, length(missingdates)),
-                    volume_usd=rep(NA, length(missingdates)),
-                    market_cap_usd=rep(NA, length(missingdates)),
-                    available_supply=rep(NA, length(missingdates)),
-                    datetime=as.Date(missingdates, origin="1970-01-01"),
-                    currency_slug=rep(currency, length(missingdates))))
-}
 vals <- interpolate.missing.data(vals) # For missing dates, insert fields and interpolate values (takes some time)
 
 ### 2. Calculate overall market statistics
@@ -91,160 +60,70 @@ market.data <- function(data) {
 }
 market <- market.data(vals)
 
-# Plot market cap, market return, market volatility and herfindahl index
-plot.market <- function(market) {
-  p1 <- ggplot(market, aes(datetime, cap)) +
-    geom_line() +
-    labs(x="Date", y="Market cap", title="Overall market") +
-    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
-  p2 <- ggplot(market, aes(datetime, logreturn)) +
-    geom_line() +
-    labs(x="Date", y="Log return") +
-    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
-  p3 <- ggplot(market, aes(datetime, volatility.30d)) +
-    geom_line() +
-    labs(x="Date", y="Annualized volatility") +
-    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
-  p4 <- ggplot(market, aes(datetime, herfindahl)) + geom_line() + labs(x="Date", y="Herfindahl index")
-  ## convert plots to gtable objects
-  library(gtable)
-  library(grid) # low-level grid functions are required
-  g1 <- ggplotGrob(p1)
-  g2 <- ggplotGrob(p2)
-  g3 <- ggplotGrob(p3)
-  g4 <- ggplotGrob(p4)
-  g <- rbind(g1, g2, g3, g4, size="first") # stack the plots
-  g$widths <- unit.pmax(g1$widths, g2$widths, g3$widths, g4$widths) # use the largest widths
-  # center the legend vertically
-  g$layout[grepl("guide", g$layout$name),c("t","b")] <- c(1,nrow(g))
-  grid.newpage()
-  grid.draw(g)
-  # ggsave("Market-statistics.png", g, width=8, height=6, dpi=100, units="in")
-}
 plot.market(market)
-
 
 ### 3. Calculate individual currency statistics
 
 # Fetch latest market capitalisation per currency
-f = function(x) {
+latestMarketCapPerCurrency = function(x) {
   vals[vals$currency_slug==x & vals$datetime==max(vals[vals$currency_slug==x,]$datetime),]$market_cap_usd
 }
 
 # Sort the currencies by market value
 currencies$mcap = NULL
-currencies$mcap <- sapply(currencies$slug, FUN=f)
+currencies$mcap <- sapply(currencies$slug, FUN=latestMarketCapPerCurrency)
 currencies <- currencies[order(currencies$mcap,currencies$slug, decreasing=TRUE),]; 
 order(currencies$mcap,currencies$slug, decreasing=TRUE)
 rownames(currencies) <- 1:nrow(currencies) # Sort
-
+# display our sorted currencies
+currencies
 
 # Calculate returns for all values
 vals$return <- Reduce(c,sapply(unique(vals$currency_slug), FUN=function(x) c(0,diff(vals[vals$currency_slug==x,]$price_usd)/(vals[vals$currency_slug==x,]$price_usd)[-length(vals[vals$currency_slug==x,]$price_usd)])))
 vals$logreturn <- Reduce(c,sapply(unique(vals$currency_slug), FUN=function(x) c(0,log(vals[vals$currency_slug==x,]$price_usd[-1]/vals[vals$currency_slug==x,]$price_usd[-length(vals[vals$currency_slug==x,]$price_usd)]))))
 
-###################################################
-##################################################
-### Google Trend data Steps
-# Step1 Download data from 2016
-beginDate = as.Date('2016-01-01')
-limitDate = as.Date('2018-05-23')
-numberOfPeriods = ceiling( (limitDate - beginDate) / 90 )
-google.trends = data.frame()
-cat(sprintf("numberofPeriods %s", numberOfPeriods))
-# Initialize to -1 to avoid rescaling on first loop
-for(l in 1:numberOfPeriods) {
-  endDate = beginDate + 90
-  if(endDate > limitDate) {
-    endDate = limitDate
-  }
-  time = sprintf("%s %s", as.Date(beginDate), as.Date(endDate))
-  # cat(sprintf("Test Fetching trend data for %s\n", time))
-  rangeTrends = gtrends(c("btc"), gprop = c("web"), time = time)[[1]]
-  
-  firstRow = rangeTrends[1,]
-  rescaleRatio = 1
-  
-  if(l==1) {
-    rescaleRatio = 1
-  } else {
-    rescaleRatio = lastValue$hits / firstRow$hits  
-  }
-  
-  cat(sprintf("new range %s, ratio=%s\n", time, rescaleRatio))
-  # Rescale the latest range with the ratio
-  rangeTrends$hits = rangeTrends$hits * rescaleRatio
-  lastValue = rangeTrends[nrow(rangeTrends), ] # save the last row for next loop
-
-  # cat(sprintf("backup last row (date=%s) for next loop=%s\n", lastValue$datetime, lastValue$hits))
-  rangeTrends = rangeTrends[-nrow(rangeTrends), ] # remove last row before to merge
-  google.trends = rbind(google.trends, rangeTrends)
-
-  beginDate = endDate
-}
-google.trends
-google.trends$datetime = as.Date(google.trends$date)
-
-google.trends
-
-# Step 2 Merge bitcoins data and google trends data
-btc_values = subset(vals, currency_slug=="bitcoin")
-# Limit our subset data to 2016
-btc_values = subset(btc_values, datetime > "2016-01-01")
-
-fullDataset = merge(google.trends, btc_values, by="datetime") %>%
-  arrange(datetime)
-
-write.csv(google.trends, file="gtrends.csv")
-
-google.trends$hits
-btc_values$datetime
-fullDataset
-
-# fullDataset$hits_trend = fullDataset$hits - lag(fullDataset$hits) 
-# fullDataset$loghits = log(pmax(fullDataset$hits, 1))
-# fullDataset$log_hits_trend =  fullDataset$loghits - lag(fullDataset$loghits)
-# index = which(ll$datetime=="2018-04-26")
-# r = ll[(index-21):index,]
-# trend3weeks = coef(lm(datetime ~ hits, data=r))[2]
-# ll
-
-
-# Rescale google infos 'hits' to plot on same scale as the price
-rescaling_lm <- lm(price_usd ~ hits, data = fullDataset)
-fullDataset$rescaled_hits = predict(rescaling_lm)
-
-# Zoom on latest data
-temp = subset(fullDataset, datetime > "2018-03-01")
-ggplot() + geom_line(data=temp, aes(x=datetime, y=hits))
-
 
 ######################################
+## Coin Analysis
 ######################################
 
-fullDataset$sma20 = SMA(btc_values$price_usd,n=20)
-fullDataset = computeVolatility(fullDataset, c(7,14,21))
-fullDataset = computeVolume(fullDataset, list(7,14,21))
-fullDataset = computeMomentum(fullDataset, list(7,14,21))
-fullDataset = computeBuyResult(fullDataset, list(7,14,21), 0.02)
-fullDataset = computeGoogleTrends(fullDataset, c(7,14,21))
+# Scrap google trends or load directly from a previously downloaded data
+# scrapGTrendsForKeywords(c("BTC","ETH","XRP","EOS","LTC"), "gtrends.csv")
+google.trends = read.csv("gtrends.csv")
+google.trends$datetime = as.Date(google.trends$datetime)
 
-ggplot() +  
-  geom_line(data = fullDataset, aes(y=price_usd, x=datetime)) +
-  geom_line(data=fullDataset, aes(y=sma20, x=datetime, color="SMA 20 Days")) 
+plotGTrends(google.trends)
 
-ggplot(data = fullDataset, aes(y=return, x=datetime))  + geom_line()
+btcValues = coinDataEngineering("BTC")
+ethValues = coinDataEngineering("ETH")
+xrpValues = coinDataEngineering("XRP")
+ltcValues = coinDataEngineering("LTC")
+eosValues = coinDataEngineering("EOS")
 
-ggplot() + 
-  geom_line(data = fullDataset, aes(y=volume_usd, x=datetime)) 
+btcResults = doLogisticReg(btcValues)
+ethResults = doLogisticReg(ethValues)
+xrpResults = doLogisticReg(xrpValues)
+ltcResults = doLogisticReg(ltcValues)
+eosResults = doLogisticReg(eosValues)
 
-ggplot() + geom_line(data=fullDataset, aes(x=datetime, y=hits)) + geom_line(data = fullDataset, aes(y=price_usd, x=datetime)) 
+plotCoinData(btcValues)
+plotLogisticReg(btcResults)
 
-ggplot() +  
-  geom_line(data = fullDataset, aes(y=price_usd, x=datetime)) +
-  #geom_line(data=fullDataset, aes(y=sma20, x=datetime), color="red")  +
-  geom_line(data=fullDataset, aes(x=datetime, y=rescaled_hits), color="blue") + 
-  geom_line(data=fullDataset, aes(x=datetime, y=hits), color="green") 
+plotCoinData(ethValues)
+plotLogisticReg(ethResults)
+
+plotCoinData(xrpValues)
+plotLogisticReg(xrpResults)
+
+plotCoinData(eosValues)
+plotLogisticReg(eosResults)
+
+plotCoinData(ltcValues)
+plotLogisticReg(ltcResults)
+
+
+results = list(btcResults, ethResults, xrpResults, ltcResults, eosResults)
+compareResults(results)
 
 
 {
