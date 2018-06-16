@@ -75,6 +75,8 @@ currencies$mcap <- sapply(currencies$slug, FUN=latestMarketCapPerCurrency)
 currencies <- currencies[order(currencies$mcap,currencies$slug, decreasing=TRUE),]; 
 order(currencies$mcap,currencies$slug, decreasing=TRUE)
 rownames(currencies) <- 1:nrow(currencies) # Sort
+
+currencies$beta <- sapply(currencies$slug, FUN=currency.beta, vals[vals$datetime>as.Date("2016-12-31"),], market)
 # display our sorted currencies
 currencies
 
@@ -86,6 +88,10 @@ vals$logreturn <- Reduce(c,sapply(unique(vals$currency_slug), FUN=function(x) c(
 ######################################
 ## Coin Analysis
 ######################################
+slugs = c("bitcoin","ethereum", "ripple", "litecoin", "eos")
+plot.currencies(vals, slugs)
+plot.beta.vs.mcap.num(20, currencies)
+plot.beta.timeline(slugs, 30, 90, vals, market)
 
 # Scrap google trends or load directly from a previously downloaded data
 # scrapGTrendsForKeywords(c("BTC","ETH","XRP","EOS","LTC"), "gtrends.csv")
@@ -121,9 +127,12 @@ plotLogisticReg(eosResults)
 plotCoinData(ltcValues)
 plotLogisticReg(ltcResults)
 
-
 results = list(btcResults, ethResults, xrpResults, ltcResults, eosResults)
 compareResults(results)
+
+
+
+
 
 
 {

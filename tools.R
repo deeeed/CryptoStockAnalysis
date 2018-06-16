@@ -1,51 +1,3 @@
-
-# Creta a function to fix missing values ("NAs") and preserve the NA info as surrogate variables
-fixNAs<-function(data_frame){
-  # Define reactions to NAs
-  integer_reac<-0
-  factor_reac<-"FIXED_NA"
-  character_reac<-"FIXED_NA"
-  date_reac<-as.Date("1900-01-01")
-  # Loop through columns in the data frame and depending on which class the variable is, apply the defined reaction and create a surrogate
-  
-  for (i in 1 : ncol(data_frame)){
-    if (class(data_frame[,i]) %in% c("numeric","integer")) {
-      if (any(is.na(data_frame[,i]))){
-        data_frame[,paste0(colnames(data_frame)[i],"_surrogate")]<-
-          as.factor(ifelse(is.na(data_frame[,i]),"1","0"))
-        data_frame[is.na(data_frame[,i]),i]<-integer_reac
-      }
-    } else
-      if (class(data_frame[,i]) %in% c("factor")) {
-        if (any(is.na(data_frame[,i]))){
-          data_frame[,i]<-as.character(data_frame[,i])
-          data_frame[,paste0(colnames(data_frame)[i],"_surrogate")]<-
-            as.factor(ifelse(is.na(data_frame[,i]),"1","0"))
-          data_frame[is.na(data_frame[,i]),i]<-factor_reac
-          data_frame[,i]<-as.factor(data_frame[,i])
-          
-        }
-      } else {
-        if (class(data_frame[,i]) %in% c("character")) {
-          if (any(is.na(data_frame[,i]))){
-            data_frame[,paste0(colnames(data_frame)[i],"_surrogate")]<-
-              as.factor(ifelse(is.na(data_frame[,i]),"1","0"))
-            data_frame[is.na(data_frame[,i]),i]<-character_reac
-          }
-        } else {
-          if (class(data_frame[,i]) %in% c("Date")) {
-            if (any(is.na(data_frame[,i]))){
-              data_frame[,paste0(colnames(data_frame)[i],"_surrogate")]<-
-                as.factor(ifelse(is.na(data_frame[,i]),"1","0"))
-              data_frame[is.na(data_frame[,i]),i]<-date_reac
-            }
-          }
-        }
-      }
-  }
-  return(data_frame)
-}
-
 computeVolume = function(data, days) {
   if(missing(days)) {
     days = list(7,14,21) # 1week, 2weeks, 3weeks
@@ -215,6 +167,12 @@ plotCoinData = function(coinDataset) {
                c(2,3),
                c(4))
   grid.arrange(grobs=list(plot_price, plot_return, plot_volume, plot_trends), layout_matrix=lay)
+  
+  plot.currency(vals, slug)
+  
+  p1 = plot.beta.timeline(c(slug), 30, 90, vals, market)
+  p2 = plot.return.vs.market(slug, vals[vals$datetime>as.Date("2017-07-01"),], market)
+  grid.arrange(grobs=list(p1,p2), ncol=2)
 }
 
 plotLogisticReg = function(lres) {
@@ -423,6 +381,122 @@ plot.market <- function(market) {
   g$layout[grepl("guide", g$layout$name),c("t","b")] <- c(1,nrow(g))
   grid.newpage()
   grid.draw(g)
+}
+
+# Plot currency cap, return and volatility
+plot.currency <- function(data, slug) {
+  data <- data[data$currency_slug==slug,]
+  data$volatility.30d <- sapply(1:nrow(data), FUN=function(i) sd(data$logreturn[(max(i-30,0):i)]))*sqrt(365)
+  p1 <- ggplot(data, aes(datetime, market_cap_usd)) +
+    geom_line() +
+    labs(x="Date", y="Market cap", title=slug) +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
+  p2 <- ggplot(data, aes(datetime, logreturn)) +
+    geom_line() + labs(x="Date", y="Log return") +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank())
+  p3 <- ggplot(data, aes(datetime, volatility.30d)) + geom_line() + labs(x="Date", y="Annualized volatility")
+  ## convert plots to gtable objects
+  library(gtable)
+  library(grid) # low-level grid functions are required
+  g1 <- ggplotGrob(p1)
+  g2 <- ggplotGrob(p2)
+  g3 <- ggplotGrob(p3)
+  g <- rbind(g1, g2, g3, size="first") # stack the plots
+  g$widths <- unit.pmax(g1$widths, g2$widths, g3$widths) # use the largest widths
+  # center the legend vertically
+  g$layout[grepl("guide", g$layout$name),c("t","b")] <- c(1,nrow(g))
+  grid.newpage()
+  grid.draw(g)
+}
+
+# Plot currency cap, return and volatility for multiple currencies
+plot.currencies <- function(data, slugs) {
+  data <- data[data$currency_slug %in% slugs,]
+  data$volatility.30d <- Reduce(c,sapply(unique(data$currency_slug), FUN=function(x) sapply(1:length(data[data$currency_slug==x,]$logreturn), FUN=function(i) sd(data[data$currency_slug==x,]$logreturn[(max(i-30,0):i)]))))*sqrt(365)
+  p1 <- ggplot(data, aes(datetime, market_cap_usd, color=factor(currency_slug))) +
+    geom_line() +
+    labs(x="Date", y="Market cap", title=paste(slugs, collapse=", ")) +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.title=element_blank())
+  p2 <- ggplot(data, aes(datetime, logreturn, color=factor(currency_slug))) +
+    geom_line() +
+    labs(x="Date", y="Log return") +
+    theme(axis.title.x=element_blank(), axis.text.x=element_blank(), axis.ticks.x=element_blank(), legend.title=element_blank())
+  p3 <- ggplot(data, aes(datetime, volatility.30d, color=factor(currency_slug))) +
+    geom_line() +
+    labs(x="Date", y="Annualized volatility")
+  ## convert plots to gtable objects
+  library(gtable)
+  library(grid) # low-level grid functions are required
+  g1 <- ggplotGrob(p1)
+  g2 <- ggplotGrob(p2)
+  g3 <- ggplotGrob(p3)
+  g <- rbind(g1, g2, g3, size="first") # stack the plots
+  g$widths <- unit.pmax(g1$widths, g2$widths, g3$widths) # use the largest widths
+  # center the legend vertically
+  g$layout[grepl("guide", g$layout$name),c("t","b")] <- c(1,nrow(g))
+  grid.newpage()
+  grid.draw(g)
+}
+
+# Generates a dataframe with complete daily information for a set of currencies
+analysis.data <- function(currencies, data, market=NULL) {
+  temp <- lapply(currencies, FUN=function(x) subset(data, currency_slug==x))
+  temp <- Reduce(function(df1, df2) merge(df1, df2, by="datetime"), temp)
+  if (length(currencies) > 1)
+    colnames(temp) <- c("datetime", sapply(currencies, function(slug) sapply(colnames(data)[c(1:5,7:9)], function(x) paste(x, slug, sep="_"))))
+  if (!is.null(market))
+    temp <- merge(temp, market, by="datetime")
+  data.frame(temp)
+}
+
+# Generates a dataframe with daily returns for a set of currencies
+analysis.return.data <- function(currencies, data) {
+  data <- reshape(data[data$currency_slug %in% currencies,c(6,7,9)], direction="wide", idvar="datetime", timevar="currency_slug")
+  colnames(data) <- c("datetime", sort(currencies))
+  data <- data[,c("datetime", currencies)]
+  return(data)
+}
+
+# Plot return against weighted market return
+plot.return.vs.market <- function(currency, data, market) {
+  data <- analysis.data(currency, data, market)
+  cor_ <- cor(data$logreturn.x, data$logreturn.y)
+  p <- ggplot(data, aes(x=logreturn.x, y=logreturn.y)) + geom_point() +
+    labs(title=paste("Returns: ",currency," vs Market (cor = ",round(cor_, digits=4),")",sep=""), x=paste(currency, "return"), y="Market return") +
+    theme(legend.title=element_blank())
+  return(p)
+}
+
+# Plot betas of top currencies against latest market cap
+plot.beta.vs.mcap.num <- function(num, currencies) {
+  data <- currencies[order(currencies$mcap, decreasing=TRUE),] # Sort
+  data <- data[0:num,]
+  p <- ggplot(data, aes(x=mcap, y=beta)) + geom_point() + scale_x_log10() +  geom_text(aes(label=name),hjust=0, vjust=0) +
+    labs(title="Beta vs Market capitalisation", x="Market capitalisation [USD] (log scale)", y="Beta") 
+  # # ggsave("Beta-vs-mcap.png", width=8, height=5, dpi=100, units="in")
+  return(p)
+}
+
+# Plot betas over time
+plot.beta.timeline <- function(currencies, mindays, maxdays, data, market) {
+  data <- data[data$currency_slug %in% currencies,]
+  dates <- intersect(data$datetime, market$datetime)
+  result <- data.frame(datetime=as.Date(rep(dates, times=length(currencies)), origin="1970-01-01"), currency=rep(currencies,each=length(dates)))
+  result$beta <- Reduce(c, sapply(currencies,
+                                  function(currency) sapply(dates,
+                                                            function(date) if(nrow(data[data$currency_slug==currency & date-maxdays<data$datetime & data$datetime<=date,])<mindays) return(NA) else currency.beta(currency, data[data$currency_slug==currency & date-maxdays<data$datetime & data$datetime<=date,], market))))
+  p <- ggplot(result, aes(datetime, beta, color=factor(currency))) +
+    geom_line() + labs(x="Date", y="Beta", title=paste("Beta timeline: ", paste(currencies, collapse=", "))) +
+    theme(legend.position="bottom")
+  
+  return(p)
+}
+
+# Calculate betas
+currency.beta <- function(currency, data, market) {
+  dates <- intersect(data[data$currency_slug==currency,]$datetime, market$datetime)
+  return(cov(data[data$currency_slug==currency & data$datetime %in% dates,]$logreturn,
+             market[market$datetime %in% dates,]$logreturn)/var(market[market$datetime %in% dates,]$logreturn))
 }
 
 interpolate.missing.data <- function(data) {

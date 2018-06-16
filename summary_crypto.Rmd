@@ -11,7 +11,7 @@ output:
 ---
 
 - BRETON Arthur
-- BOMBOA Vinchi
+- GAMBOA Vinchi
 - DORANGE Romain
 - HU Clement
 - LONGO Giuliano
@@ -19,11 +19,20 @@ output:
 
 # Objectives
 
-**Can we issue a buy/sell recommendation of bitcoin on a 7days holding period?**
+**Can we issue a buy/sell recommendation of cryptostock on a 7days holding period?**
 
 ![](./images/recommendations.png)
 
-# Data Gathering
+# What is the relevant Data for our model ?
+
+- Price 
+- Volume
+- Correlation
+- Social Media
+- Google Trends
+- Utility Indicator
+
+# Data Preparation
 
 ```{r include=FALSE}
 rm(list=ls(all=TRUE)) # Remove everything from environment
@@ -52,9 +61,6 @@ set.seed(1234)
 source("tools.R")
 source("scrapper.R")
 ```
-How much data history do we need?
-
-- We decided to limit ourselves to January 2016
 
 We used an external Python script to scrape the website www.coinmarketcap.com
 
@@ -65,6 +71,14 @@ Besides technical analysis on the stock, we also wanted to include a trend facto
 ![](./images/googletrends.png)
 
 Our hypothesis was that there is a strong correlation between google searches and stock prices.
+
+### Feature Overview
+
+- Volume 
+- Momemtum 
+- Volatility 
+- Trend
+- Buy / Sell classifier
 
 ### Downloading Data
 
@@ -102,7 +116,7 @@ head(google.trends)
 
 Atht he moment we are unable to sort our currency by market cap.
 
-# Cleanup data
+### Cleanup data
 
 - Remove unused IDs
 - Format Dates
@@ -118,13 +132,20 @@ vals <- vals[!duplicated(vals[,6:7]),] # Remove duplicates/one price per day
 vals <- interpolate.missing.data(vals) # For missing dates, insert fields and interpolate values (takes some time)
 ```
 
-# Visualize initial Data
+### Visualize initial Data
 
 ```{r}
 plotGTrends(google.trends)
 ```
 
+
 # Feature Engineering
+
+We build these categorical variables on different lag periods:
+
+- 7 days
+- 14 days
+- 21 days
 
 ### Create Overall Market statistics
 
@@ -155,6 +176,10 @@ rownames(currencies) <- 1:nrow(currencies) # Sort
 # Calculate returns for all values
 vals$return <- Reduce(c,sapply(unique(vals$currency_slug), FUN=function(x) c(0,diff(vals[vals$currency_slug==x,]$price_usd)/(vals[vals$currency_slug==x,]$price_usd)[-length(vals[vals$currency_slug==x,]$price_usd)])))
 vals$logreturn <- Reduce(c,sapply(unique(vals$currency_slug), FUN=function(x) c(0,log(vals[vals$currency_slug==x,]$price_usd[-1]/vals[vals$currency_slug==x,]$price_usd[-length(vals[vals$currency_slug==x,]$price_usd)]))))
+
+# Compute betas
+currencies$beta <- sapply(currencies$slug, FUN=currency.beta, vals[vals$datetime>as.Date("2016-12-31"),], market)
+
 ```
 
 ```{r echo=FALSE, message=FALSE, warning=FALSE}
@@ -173,19 +198,50 @@ plotGTrendsIssue(google.trends)
 
 ![](./images/scrapping_googletrends.png)
 
-### Other Predictors
+### Volume
 
-We build these categorical variables on different lag periods (7,14,21 days).
+Represent the average volume for a period:
 
-- Volume 
-- Momemtum 
-- Volatility 
-- Trend
-- Buy / Sell classifier
+- volume.7d
+- volume.14d
+- volume.21d
 
-# Coin Analysis
+### Volatility
 
-We start by building our features on each independent coins.
+Standard deviation of the returns for a period:
+
+- volatility.7d
+- volatility.14d
+- volatility.21d
+
+### Momemtum
+
+Score representing the delta of Upwards VS Downwards returns.
+
+- momentum.7d
+- momentum.14d
+- momemtum.21d
+
+### Trends
+
+Linear regression of the Trends for a period from which we extract the coeeficient.
+
+- trends.7d
+- trends.14d
+- trends.21d
+
+### Buy / Sell Classifier
+
+Starting from a specific day, we look back at a period returns to determine if we should have issued a buy or sell. This will allow us to test our model.
+
+- buy.7d
+- buy.14d
+- buy.21d
+
+## Putting it together
+
+We are able to define the state of the market by mixing different features together. For example, we can determine how bullish/bearish a market is by multiplying our trend coefficient with the momentum. 
+
 
 ```{r warning=FALSE}
 btcValues = coinDataEngineering("BTC")
@@ -195,7 +251,38 @@ ltcValues = coinDataEngineering("LTC")
 eosValues = coinDataEngineering("EOS")
 ```
 
-```{r warning=FALSE}
+# Techincal Analysis
+
+```{r echo=FALSE, message=FALSE, warning=FALSE}
+corrplot(cor(analysis.return.data(currencies[1:25,]$slug,vals[vals$datetime>as.Date("2016-12-31"),])[,-1],
+             use = "pairwise.complete.obs"), method="ellipse")
+plot.beta.vs.mcap.num(20, currencies)
+```
+
+```{r echo=FALSE, warning=FALSE}
+slugs = c("bitcoin","ethereum", "ripple", "litecoin", "eos")
+plot.currencies(vals, slugs)
+plot.beta.timeline(slugs, 30, 90, vals, market)
+```
+
+
+```{r warning=FALSE, include=FALSE}
+btcResults = doLogisticReg(btcValues)
+ethResults = doLogisticReg(ethValues)
+xrpResults = doLogisticReg(xrpValues)
+ltcResults = doLogisticReg(ltcValues)
+eosResults = doLogisticReg(eosValues)
+```
+
+## Logistic Regression
+
+**buy.7 ~ volume.7 + volume.14 + volume.21 + volatility.7 + volatility.14 + volatility.21 + momentum.7 +  momentum.14 + momentum.21 + gtrend.7 + gtrend.14 + gtrend.21**
+
+```{r eval = FALSE}
+model = buy.7 ~ volume.7 + volume.14 + volume.21 + volatility.7 + volatility.14 + volatility.21 + momentum.7 +  momentum.14 + momentum.21 + gtrend.7 + gtrend.14 + gtrend.21
+  # Train our model first
+  logistic_reg = glm(model, data=training, family="binomial"(link="logit"))
+  
 btcResults = doLogisticReg(btcValues)
 ethResults = doLogisticReg(ethValues)
 xrpResults = doLogisticReg(xrpValues)
@@ -242,11 +329,6 @@ knitr::kable(df, caption = "", align = 'c')  %>%
   kable_styling(bootstrap_options = c("striped", "hover", "condensed", "responsive")) %>% 
   column_spec(1, bold = T, border_right = T)
 ```
-
-# Should we buy today ?
-- Table of currency with buy/sell value
-
-*TODO*
 
 # Going Further
 
